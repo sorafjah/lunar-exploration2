@@ -75,7 +75,7 @@
 </style>
 </head>
 <body>
-<!-- build: 2026-09-29e -->
+<!-- build: 2026-09-29f -->
 
 <div id="mission"></div>
 <div id="timer"></div>
@@ -93,7 +93,7 @@
 
 <div id="radio"></div>
 <div id="toast"></div>
-<div id="ver">v2026-09-29e</div>
+<div id="ver">v2026-09-29f</div>
 
 <div id="intro" class="overlay"><div class="panel scroll" id="introPanel"></div></div>
 <div id="result" class="overlay"><div class="panel scroll" id="resultPanel"></div></div>
@@ -143,6 +143,7 @@ const TIME_LIMIT = 180;                 // 制限時間（秒）
 const G = { earth: 9.8, moon: 1.62 };
 const V0 = Math.sqrt(2 * 9.8 * 0.5);   // 地球で約0.5m跳べる初速（月では約3m）
 const WALK = { earth: 3.6, moon: 2.2 };  // 移動の速さ m/s（地球は小走り、月はもっさり歩き）
+const JUMP_PUSH = { earth: 1.0, moon: 1.2 };  // スティックをたおしきってジャンプしたときの上乗せ速さ
 const PR = 0.35;                        // プレイヤーの半径
 const AREA = 68;                        // 歩ける範囲（±）
 const TURN = { ground: 7, air: 0.35 };  // 向きを変える速さ（空中では体を少しひねれるだけ）
@@ -724,7 +725,7 @@ function showIntro(resume){
     <h2>そうさ</h2>
     <div class="cards">
       <div class="card">${ICON.joy}ひだりしたの スティックで あるく</div>
-      <div class="card">${ICON.jump}「ジャンプ」で とぶ</div>
+      <div class="card">${ICON.jump}「ジャンプ」で とぶ。スティックを たおすほど とおくへ</div>
       <div class="card">${ICON.drag}がめんを ゆびで なぞると みる むきが かわる</div>
       <div class="card">${ICON.mode}みぎうえの ボタンで 地球と 月を きりかえ</div>
       <div class="card">${ICON.timer}じかんは ${TIME_LIMIT/60}ぷん</div>
@@ -781,8 +782,8 @@ function showResult(kind){
    ========================================================= */
 const other = m => m === 'moon' ? '地球' : '月';
 function onJumpMeasured(h, t, m){
-  toast(furi(`${m==='moon'?'🌕 月':'🌍 地球'}　高さ 約${fmt(h)}m ／ 空中 約${fmt(t)}秒`));
   if (S.mission !== 1) return;
+  toast(furi(`${m==='moon'?'🌕 月':'🌍 地球'}　高さ 約${fmt(h)}m ／ 空中 約${fmt(t)}秒`));
   S.rec.jump[m] = { h, t };
   renderMission();
   const r = S.rec.jump;
@@ -862,7 +863,7 @@ const cv = renderer.domElement; let dragId = null, lastX = 0, lastY = 0;
 cv.addEventListener('pointerdown', e => { if (dragId !== null) return; dragId = e.pointerId; lastX = e.clientX; lastY = e.clientY; cv.setPointerCapture(e.pointerId); });
 cv.addEventListener('pointermove', e => {
   if (e.pointerId !== dragId) return;
-  cam.yaw += (e.clientX - lastX) * 0.006;
+  cam.yaw -= (e.clientX - lastX) * 0.006;
   cam.pitch = Math.min(1.2, Math.max(0.05, cam.pitch + (e.clientY - lastY) * 0.004));
   lastX = e.clientX; lastY = e.clientY;
 });
@@ -970,6 +971,13 @@ function updatePlayer(dt){
   // ジャンプ
   if (input.jumpQueued && player.grounded && player.state === 'normal'){
     player.vy = V0; player.grounded = false;
+    // たおさず→その場で真上、たおすほど遠くへ（高さはいつも同じなので記録に影響しない）
+    const push = Math.min(1, mlen);
+    if (push < 0.08){ player.vx = 0; player.vz = 0; }
+    else {
+      const sp = (WALK[S.mode] + JUMP_PUSH[S.mode]) * push;
+      player.vx = mx/mlen * sp; player.vz = mz/mlen * sp;
+    }
     player.jump = { startY: player.y, maxY: player.y, t0: S.elapsed, mode: S.mode, mixed: false };
     sfx.jump();
   }
