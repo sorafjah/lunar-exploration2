@@ -75,7 +75,7 @@
 </style>
 </head>
 <body>
-<!-- build: 2026-09-29c -->
+<!-- build: 2026-09-29d -->
 
 <div id="mission"></div>
 <div id="timer"></div>
@@ -93,7 +93,7 @@
 
 <div id="radio"></div>
 <div id="toast"></div>
-<div id="ver">v2026-09-29c</div>
+<div id="ver">v2026-09-29d</div>
 
 <div id="intro" class="overlay"><div class="panel scroll" id="introPanel"></div></div>
 <div id="result" class="overlay"><div class="panel scroll" id="resultPanel"></div></div>
@@ -142,7 +142,7 @@ const fmt = v => v < 1 ? (Math.round(v*10)/10).toFixed(1) : String(Math.round(v)
 const TIME_LIMIT = 120;                 // 制限時間（秒）
 const G = { earth: 9.8, moon: 1.62 };
 const V0 = Math.sqrt(2 * 9.8 * 0.5);   // 地球で約0.5m跳べる初速（月では約3m）
-const WALK = 2.2;                       // 歩く速さ m/s
+const WALK = { earth: 3.6, moon: 2.2 };  // 移動の速さ m/s（地球は小走り、月はもっさり歩き）
 const PR = 0.35;                        // プレイヤーの半径
 const AREA = 68;                        // 歩ける範囲（±）
 const TURN = { ground: 7, air: 0.35 };  // 向きを変える速さ（空中では体を少しひねれるだけ）
@@ -545,7 +545,7 @@ tiltGroup.add(rigs.earth.group, rigs.moon.group);
 const stoneMat = new THREE.MeshStandardMaterial({ color:0xd9822b, emissive:0x5a2a00, roughness:.6, flatShading:true });
 const beamMat = new THREE.MeshBasicMaterial({ color:0xffe066, transparent:true, opacity:.28, depthWrite:false, fog:false });
 const ringMat = new THREE.MeshBasicMaterial({ color:0xffe066, side:THREE.DoubleSide, fog:false });
-const stones = [0,1,2].map(() => {
+const stones = [0,1].map(() => {
   const g = new THREE.Group();
   const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(0.24), stoneMat); rock.position.y = 0.22; rock.castShadow = true;
   const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 14, 12, 1, true), beamMat); beam.position.y = 7;
@@ -553,20 +553,28 @@ const stones = [0,1,2].map(() => {
   g.add(rock, beam, ring); g.visible = false; scene.add(g);
   return { g, ring, collected:false, spot:null };
 });
-// 石の場所：毎回ランダム。2こはクレーターの中、1こはクレーターか大岩の上
+// 石の場所：毎回ランダム。1こはクレーターの中、1こはふつうの地面
+const NSTONE = 2;
 function pickStoneSpots(){
   const far = (x,z) => Math.hypot(x, z-3) > 10 && Math.hypot(x-BASE.x, z-BASE.z) > 8;
-  const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
-  const inCrater = k => { const a = Math.random()*Math.PI*2, d = Math.random()*k.R*0.45;
-    return { kind:'crater', x:k.x + Math.cos(a)*d, z:k.z + Math.sin(a)*d }; };
-  const cr = shuffle(craters.filter(k => far(k.x, k.z) && Math.hypot(k.x, k.z) < 50));
-  const high = colliders.filter(c => !c.base && c.h >= 2 && far(c.x, c.z)).map(c => ({ kind:'rock', x:c.x, z:c.z, h:c.h }));
-  const chosen = [];
-  const tryAdd = s => { if (chosen.length < 3 && chosen.every(c => Math.hypot(c.x-s.x, c.z-s.z) > 12)){ chosen.push(s); return true; } return false; };
-  let n = 0;
-  for (const k of cr){ if (n >= 2) break; if (tryAdd(inCrater(k))) n++; }
-  for (const s of shuffle([...cr.map(inCrater), ...high])) tryAdd(s);
-  return chosen;
+  const cr = craters.filter(k => far(k.x, k.z) && Math.hypot(k.x, k.z) < 50);
+  const k = cr[Math.floor(Math.random()*cr.length)];
+  const a = Math.random()*Math.PI*2, d = Math.random()*k.R*0.45;
+  const s1 = { kind:'crater', x:k.x + Math.cos(a)*d, z:k.z + Math.sin(a)*d };
+  let s2 = null;
+  for (let i=0; i<2000 && !s2; i++){
+    const x = (Math.random()-.5)*90, z = (Math.random()-.5)*90;
+    if (!far(x,z) || Math.hypot(x-s1.x, z-s1.z) < 15) continue;
+    if (insideCrater(x, z, 1.7) || hillH(x, z) > 0.02) continue;
+    if (colliders.some(c => Math.hypot(x-c.x, z-c.z) < c.r + 2)) continue;
+    if (tripRocks.some(t => Math.hypot(x-t.x, z-t.z) < 1.5)) continue;
+    s2 = { kind:'ground', x, z };
+  }
+  return Math.random() < .5 ? [s1, s2] : [s2, s1];
+}
+// 石は月にだけ出る（ミッション2のあいだ、取っていないもの）
+function refreshStones(){
+  for (const s of stones) s.g.visible = S.mode === 'moon' && S.mission === 2 && !s.collected;
 }
 function spotY(sp){
   if (sp.kind === 'rock') return sp.h;
@@ -664,13 +672,13 @@ function renderMission(){
          <div class="ms">地球と 月で 1かいずつ ジャンプ</div>
          <div class="chk">${ck(r.jump.earth)} 地球　${ck(r.jump.moon)} 月</div>`;
   } else if (S.mission === 2){
-    h = r.stones < 3
+    h = r.stones < NSTONE
       ? `<div class="mt">ミッション2　石を あつめよう</div>
          <div class="ms">光っている 石を あつめる</div>
-         <div class="chk">石　${r.stones} / 3</div>`
+         <div class="chk">石　${r.stones} / ${NSTONE}</div>`
       : `<div class="mt">ミッション2　探査機に もどろう</div>
          <div class="ms">みどりの 光の ところへ</div>
-         <div class="chk">石　3 / 3 ✅</div>`;
+         <div class="chk">石　${NSTONE} / ${NSTONE} ✅</div>`;
   } else {
     h = `<div class="mt">ミッション クリア！</div>`;
   }
@@ -693,7 +701,8 @@ function setMode(m){
     scene.background = new THREE.Color(0x8ec9f0); scene.fog = new THREE.Fog(0xa8d8f0, 50, 260);
     hemi.intensity = 1.1; sun.intensity = 2.2; sun.shadow.radius = 6;
   }
-  placeStones();
+  placeStones(); refreshStones();
+  if (!moon && S.mission === 2 && S.rec.stones < NSTONE) radioOnce('stoneMoon', '光る 石は 月に あるよ。月に もどって さがそう。', 5);
   // 地面の高さが変わるので、立っている位置をあわせる
   if (player.grounded) player.y = floorAt(player.x, player.z, player.y + 0.5);
   if (player.jump) player.jump.mixed = true;
@@ -724,7 +733,7 @@ function showIntro(resume){
     <h2>ミッション</h2>
     <ol class="mlist">
       <li>地球と 月で ジャンプして、高さを くらべよう</li>
-      <li>光っている 石を 3こ あつめて、探査機に もどろう</li>
+      <li>月で 光っている 石を 2こ あつめて、探査機に もどろう</li>
     </ol>
     <div class="note">📡 月には 空気が ないので、音が きこえません。なかまの こえは 無線で とどきます。<br>⚠️ 石や クレーターで バランスを くずすことが あるよ。</div>
   `) + `<button class="bigBtn" id="startBtn">${resume ? 'つづける' : 'はじめる'}</button>`;
@@ -757,7 +766,7 @@ function showResult(kind){
       <tr><th></th><th>🌍 地球</th><th>🌕 月</th></tr>
       <tr><th>ジャンプの 高さ</th><td>${cell(j.earth,'h','m')}</td><td>${cell(j.moon,'h','m')}</td></tr>
       <tr><th>空中に いた 時間</th><td>${cell(j.earth,'t','秒')}</td><td>${cell(j.moon,'t','秒')}</td></tr>
-      <tr><th>あつめた 石</th><td colspan="2">${S.rec.stones} / 3</td></tr>
+      <tr><th>あつめた 石</th><td colspan="2">${S.rec.stones} / ${NSTONE}</td></tr>
       <tr><th>こけた 回すう</th><td colspan="2">${S.rec.falls}回</td></tr>
       ${cleared ? `<tr><th>クリア タイム</th><td colspan="2">${Math.floor(ct/60)}分${Math.round(ct%60)}秒</td></tr>` : ''}
     </table>
@@ -783,16 +792,17 @@ function onJumpMeasured(h, t, m){
     radio(`すごい！ 月では 地球の 約${ratio}倍 高く とべたね。つぎは ミッション2だ。`, 7);
     S.mission = 1.5;
     later(3, () => {
-      S.mission = 2; renderMission();
-      stones.forEach(s => s.g.visible = true);
-      radio('光っている 石を 3こ あつめて、探査機に もどろう。石は クレーターの 中に あることが おおいよ。', 9);
+      S.mission = 2;
+      if (S.mode !== 'moon') setMode('moon');
+      renderMission(); refreshStones();
+      radio('月に もどったよ。光っている 石を 2こ あつめて、探査機に もどろう。1こは クレーターの 中に あるよ。', 9);
     });
   } else {
     radio(`いいね！ つぎは ${other(m)}で とんでみよう。みぎうえの ボタンで きりかえてね。`);
   }
 }
 function updateStones(){
-  if (S.mission !== 2) return;
+  if (S.mission !== 2 || S.mode !== 'moon') return;
   const px = player.x, py = player.y + 0.9, pz = player.z;
   for (const s of stones){
     if (s.collected) continue;
@@ -800,13 +810,11 @@ function updateStones(){
     if (Math.hypot(px - p.x, py - (p.y + 0.22), pz - p.z) < 1.35){
       s.collected = true; s.g.visible = false; S.rec.stones++;
       sfx.collect(); renderMission();
-      if (S.rec.stones >= 3){ baseBeam.visible = true; radio('石を ぜんぶ あつめたね！ みどりの 光の 探査機に もどろう。'); }
-      else toast(furi(`石 ${S.rec.stones} / 3`), 2);
+      if (S.rec.stones >= NSTONE){ baseBeam.visible = true; radio('石を ぜんぶ あつめたね！ みどりの 光の 探査機に もどろう。'); }
+      else toast(furi(`石 ${S.rec.stones} / ${NSTONE}`), 2);
     }
-    if (S.mode === 'earth' && s.spot.kind === 'rock' && s.spot.h > 1.5 && Math.hypot(px - p.x, pz - p.z) < 3.5)
-      radioOnce('earthRock', '地球の ジャンプでは とどかないね。月に きりかえてみよう。');
   }
-  if (S.rec.stones >= 3 && player.grounded && Math.hypot(player.x - BASE.x, player.z - BASE.z) < 4.2){
+  if (S.rec.stones >= NSTONE && player.grounded && Math.hypot(player.x - BASE.x, player.z - BASE.z) < 4.2){
     S.mission = 3; renderMission(); baseBeam.visible = false;
     S.rec.clearTime = TIME_LIMIT - S.timeLeft;
     sfx.clear(); radio('ミッション クリア！ おつかれさま。', 5);
@@ -935,8 +943,8 @@ function updatePlayer(dt){
   if (canMove && player.grounded){          // 空中では足で地面をけれないので、進む向きは変わらない
     const acc = 10;
     const a = Math.min(1, acc*dt);
-    player.vx += (mx*WALK*speedMul - player.vx) * a;
-    player.vz += (mz*WALK*speedMul - player.vz) * a;
+    player.vx += (mx*WALK[S.mode]*speedMul - player.vx) * a;
+    player.vz += (mz*WALK[S.mode]*speedMul - player.vz) * a;
   } else if (player.grounded){
     const f = Math.exp(-3*dt); player.vx *= f; player.vz *= f;
   }
@@ -981,9 +989,9 @@ function updatePlayer(dt){
 
   // 歩くアニメーション・足あと・足音
   const sp = Math.hypot(player.vx, player.vz);
-  player.moveAmt = Math.min(1, sp / WALK);
+  player.moveAmt = Math.min(1, sp / WALK[S.mode]);
   if (player.grounded && canMove && player.moveAmt > 0.1){
-    player.phase += dt * player.moveAmt * (S.mode === 'moon' ? 3.4 : 6.5);
+    player.phase += dt * player.moveAmt * (S.mode === 'moon' ? 3.4 : 10.5);
     const st = Math.floor(player.phase / Math.PI);
     if (st !== player.stride){
       player.stride = st;
@@ -1042,12 +1050,12 @@ function poseRig(){
   } else {
     // もっさり歩き：歩はばは小さめ、体を左右にゆらし、上下にはずむ
     const heavy = S.mode === 'moon';
-    const s = Math.sin(player.phase) * (heavy ? 0.42 : 0.55) * player.moveAmt;
+    const s = Math.sin(player.phase) * (heavy ? 0.42 : 0.75) * player.moveAmt;
     r.legL.rotation.x = s; r.legR.rotation.x = -s;
-    r.armL.rotation.x = -s*0.5; r.armR.rotation.x = s*0.5;
+    r.armL.rotation.x = -s*(heavy ? 0.5 : 1.1); r.armR.rotation.x = s*(heavy ? 0.5 : 1.1);
     r.armL.rotation.z = heavy ? 0.25 : 0; r.armR.rotation.z = heavy ? -0.25 : 0;
     tiltGroup.rotation.z = Math.sin(player.phase) * (heavy ? 0.09 : 0.03) * player.moveAmt;
-    bob = Math.abs(Math.sin(player.phase)) * (heavy ? 0.07 : 0.03) * player.moveAmt;
+    bob = Math.abs(Math.sin(player.phase)) * (heavy ? 0.07 : 0.06) * player.moveAmt;
   }
   if (player.state === 'wobble'){
     const k = player.st / 1.1;
