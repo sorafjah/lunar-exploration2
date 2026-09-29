@@ -75,7 +75,7 @@
 </style>
 </head>
 <body>
-<!-- build: 2026-09-29d -->
+<!-- build: 2026-09-29e -->
 
 <div id="mission"></div>
 <div id="timer"></div>
@@ -93,7 +93,7 @@
 
 <div id="radio"></div>
 <div id="toast"></div>
-<div id="ver">v2026-09-29d</div>
+<div id="ver">v2026-09-29e</div>
 
 <div id="intro" class="overlay"><div class="panel scroll" id="introPanel"></div></div>
 <div id="result" class="overlay"><div class="panel scroll" id="resultPanel"></div></div>
@@ -130,7 +130,7 @@ const FURI = {
   '地球':'ちきゅう','月面':'げつめん','月':'つき','空中':'くうちゅう','空気':'くうき',
   '時間':'じかん','高':'たか','秒':'びょう','基地':'きち','石':'いし','岩':'いわ',
   '重力':'じゅうりょく','倍':'ばい','音':'おと','無線':'むせん','光':'ひか','回':'かい',
-  '分':'ふん','体':'からだ','落':'お','探索':'たんさく','探査機':'たんさき','管制室':'かんせいしつ'
+  '分':'ふん','体':'からだ','落':'お','探索':'たんさく','探査機':'たんさき','管制室':'かんせいしつ','丘':'おか','中':'なか'
 };
 const furiRe = new RegExp(Object.keys(FURI).sort((a,b)=>b.length-a.length).join('|'), 'g');
 const furi = s => s.replace(furiRe, m => `<ruby>${m}<rt>${FURI[m]}</rt></ruby>`);
@@ -139,7 +139,7 @@ const fmt = v => v < 1 ? (Math.round(v*10)/10).toFixed(1) : String(Math.round(v)
 /* =========================================================
    定数（調整しやすいようにここにまとめる）
    ========================================================= */
-const TIME_LIMIT = 120;                 // 制限時間（秒）
+const TIME_LIMIT = 180;                 // 制限時間（秒）
 const G = { earth: 9.8, moon: 1.62 };
 const V0 = Math.sqrt(2 * 9.8 * 0.5);   // 地球で約0.5m跳べる初速（月では約3m）
 const WALK = { earth: 3.6, moon: 2.2 };  // 移動の速さ m/s（地球は小走り、月はもっさり歩き）
@@ -237,13 +237,13 @@ function craterH(x, z){
 // 丘：なだらかなもり上がり（月の高地のイメージ）
 const hills = [];
 {
-  for (let i=0; i<3000 && hills.length<6; i++){
-    const W = 9 + Math.random()*8, H = 2 + Math.random()*2.5;
+  for (let i=0; i<6000 && hills.length<14; i++){
+    const W = 6 + Math.random()*7, H = 1.8 + Math.random()*2.4;
     const x = (Math.random()-.5)*2*(AREA-5), z = (Math.random()-.5)*2*(AREA-5);
     if (Math.hypot(x, z-3) < W*2 + 6 || Math.hypot(x-BASE.x, z-BASE.z) < W*2 + 6) continue;
     if (colliders.some(c => Math.hypot(x-c.x, z-c.z) < c.r + W*2)) continue;
     if (craters.some(k => Math.hypot(x-k.x, z-k.z) < k.R*1.5 + W*1.6)) continue;
-    if (hills.some(h => Math.hypot(x-h.x, z-h.z) < (h.W + W)*1.8)) continue;
+    if (hills.some(h => Math.hypot(x-h.x, z-h.z) < (h.W + W)*1.4)) continue;
     hills.push({ x, z, W, H });
   }
 }
@@ -415,11 +415,9 @@ const tripRocks = [];
     t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
     globe.material.map = t; globe.material.needsUpdate = true;
   }, undefined, () => {});
-  globe.rotation.y = -1.2;
+  globe.rotation.y = -1.2 + Math.PI;   // 反対側の面を見せる
   globe.position.copy(new THREE.Vector3(0.35,0.3,-1).normalize().multiplyScalar(420));
   moonEnv.add(globe);
-  const ms = new THREE.Mesh(new THREE.SphereGeometry(10,16,8), new THREE.MeshBasicMaterial({ color:0xffffff, fog:false }));
-  ms.position.copy(SUN_DIR.moon).multiplyScalar(450); moonEnv.add(ms);
 }
 
 /* 足あと：くつ底のもよう（黒っぽく、みぞが入った形）で地面と区別しやすく */
@@ -553,24 +551,25 @@ const stones = [0,1].map(() => {
   g.add(rock, beam, ring); g.visible = false; scene.add(g);
   return { g, ring, collected:false, spot:null };
 });
-// 石の場所：毎回ランダム。1こはクレーターの中、1こはふつうの地面
+// 石の場所：「岩の上」「丘の上」「クレーターの中」のうち2つをランダムにえらぶ
 const NSTONE = 2;
 function pickStoneSpots(){
-  const far = (x,z) => Math.hypot(x, z-3) > 10 && Math.hypot(x-BASE.x, z-BASE.z) > 8;
-  const cr = craters.filter(k => far(k.x, k.z) && Math.hypot(k.x, k.z) < 50);
-  const k = cr[Math.floor(Math.random()*cr.length)];
-  const a = Math.random()*Math.PI*2, d = Math.random()*k.R*0.45;
-  const s1 = { kind:'crater', x:k.x + Math.cos(a)*d, z:k.z + Math.sin(a)*d };
-  let s2 = null;
-  for (let i=0; i<2000 && !s2; i++){
-    const x = (Math.random()-.5)*90, z = (Math.random()-.5)*90;
-    if (!far(x,z) || Math.hypot(x-s1.x, z-s1.z) < 15) continue;
-    if (insideCrater(x, z, 1.7) || hillH(x, z) > 0.02) continue;
-    if (colliders.some(c => Math.hypot(x-c.x, z-c.z) < c.r + 2)) continue;
-    if (tripRocks.some(t => Math.hypot(x-t.x, z-t.z) < 1.5)) continue;
-    s2 = { kind:'ground', x, z };
+  const far = (x,z) => Math.hypot(x, z-3) > 10 && Math.hypot(x-BASE.x, z-BASE.z) > 8 && Math.hypot(x, z) < 55;
+  const pick = a => a[Math.floor(Math.random()*a.length)];
+  const makers = {
+    rock(){ const c = pick(colliders.filter(c => !c.base && c.h >= 1 && far(c.x, c.z)));
+      return { kind:'rock', x:c.x, z:c.z, h:c.h }; },
+    hill(){ const h = pick(hills.filter(h => far(h.x, h.z)));
+      return { kind:'hill', x:h.x, z:h.z }; },
+    crater(){ const k = pick(craters.filter(k => far(k.x, k.z)));
+      const a = Math.random()*Math.PI*2, d = Math.random()*k.R*0.45;
+      return { kind:'crater', x:k.x + Math.cos(a)*d, z:k.z + Math.sin(a)*d }; }
+  };
+  const kinds = ['rock','hill','crater'].sort(() => Math.random() - .5).slice(0, NSTONE);
+  for (let t=0; t<50; t++){
+    const spots = kinds.map(k => makers[k]());
+    if (Math.hypot(spots[0].x-spots[1].x, spots[0].z-spots[1].z) > 15 || t === 49) return spots;
   }
-  return Math.random() < .5 ? [s1, s2] : [s2, s1];
 }
 // 石は月にだけ出る（ミッション2のあいだ、取っていないもの）
 function refreshStones(){
@@ -791,11 +790,18 @@ function onJumpMeasured(h, t, m){
     const ratio = Math.max(1, Math.round(r.moon.h / r.earth.h));
     radio(`すごい！ 月では 地球の 約${ratio}倍 高く とべたね。つぎは ミッション2だ。`, 7);
     S.mission = 1.5;
-    later(3, () => {
+    const start2 = () => {
       S.mission = 2;
       if (S.mode !== 'moon') setMode('moon');
       renderMission(); refreshStones();
-      radio('月に もどったよ。光っている 石を 2こ あつめて、探査機に もどろう。1こは クレーターの 中に あるよ。', 9);
+      radio('光っている 石を 2こ あつめて、探査機に もどろう。石は 岩の うえ・丘の うえ・クレーターの 中の どこかに あるよ。', 9);
+    };
+    later(3, () => {
+      if (S.mode === 'moon') start2();
+      else {
+        radio('ミッション2は 月で おこなうよ。月に きりかえるよ！', 5);
+        later(2.5, start2);
+      }
     });
   } else {
     radio(`いいね！ つぎは ${other(m)}で とんでみよう。みぎうえの ボタンで きりかえてね。`);
@@ -1031,7 +1037,7 @@ function onLand(){
       later(3, () => {
         if (S.mission !== 1 || S.mode !== m) { S.sameModeJumps = 0; return; }
         radio(`こんどは ${other(m)}で とんでみよう。${other(m)}に きりかえるよ！`, 6);
-        setMode(o);
+        later(2.5, () => { if (S.mission === 1 && S.mode === m) setMode(o); });
       });
     }
   }
