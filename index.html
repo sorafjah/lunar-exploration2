@@ -44,6 +44,10 @@
   #jumpBtn{position:fixed;right:30px;bottom:34px;width:124px;height:124px;border-radius:50%;
     border:4px solid #fff;background:#ff8a3d;color:#fff;font-size:22px;font-weight:700;touch-action:none;box-shadow:0 4px 12px rgba(0,0,0,.5);}
   #jumpBtn:active{transform:scale(.94);}
+  #jumpBtn span{display:block;pointer-events:none;}
+  #jumpGauge{margin-top:6px;display:flex !important;justify-content:center;gap:6px;}
+  #jumpGauge i{width:16px;height:16px;border-radius:50%;border:2px solid #fff;background:transparent;}
+  #jumpGauge i.on{background:#fff;}
 
   #radio{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);width:min(46vw,480px);
     background:rgba(10,30,20,.85);border:2px solid #5dffa6;border-radius:14px;padding:8px 14px;
@@ -75,7 +79,7 @@
 </style>
 </head>
 <body>
-<!-- build: 2026-09-29f -->
+<!-- build: 2026-09-29g -->
 
 <div id="mission"></div>
 <div id="timer"></div>
@@ -89,11 +93,11 @@
 </div>
 
 <div id="joy"><div id="knob"></div><div id="joyLabel">あるく</div></div>
-<button id="jumpBtn">ジャンプ</button>
+<button id="jumpBtn"><span>ジャンプ</span><span id="jumpGauge"><i></i><i></i><i></i></span></button>
 
 <div id="radio"></div>
 <div id="toast"></div>
-<div id="ver">v2026-09-29f</div>
+<div id="ver">v2026-09-29g</div>
 
 <div id="intro" class="overlay"><div class="panel scroll" id="introPanel"></div></div>
 <div id="result" class="overlay"><div class="panel scroll" id="resultPanel"></div></div>
@@ -130,7 +134,7 @@ const FURI = {
   '地球':'ちきゅう','月面':'げつめん','月':'つき','空中':'くうちゅう','空気':'くうき',
   '時間':'じかん','高':'たか','秒':'びょう','基地':'きち','石':'いし','岩':'いわ',
   '重力':'じゅうりょく','倍':'ばい','音':'おと','無線':'むせん','光':'ひか','回':'かい',
-  '分':'ふん','体':'からだ','落':'お','探索':'たんさく','探査機':'たんさき','管制室':'かんせいしつ','丘':'おか','中':'なか'
+  '分':'ふん','体':'からだ','落':'お','探索':'たんさく','探査機':'たんさき','管制室':'かんせいしつ','丘':'おか','中':'なか','真上':'まうえ','長':'なが'
 };
 const furiRe = new RegExp(Object.keys(FURI).sort((a,b)=>b.length-a.length).join('|'), 'g');
 const furi = s => s.replace(furiRe, m => `<ruby>${m}<rt>${FURI[m]}</rt></ruby>`);
@@ -143,7 +147,9 @@ const TIME_LIMIT = 180;                 // 制限時間（秒）
 const G = { earth: 9.8, moon: 1.62 };
 const V0 = Math.sqrt(2 * 9.8 * 0.5);   // 地球で約0.5m跳べる初速（月では約3m）
 const WALK = { earth: 3.6, moon: 2.2 };  // 移動の速さ m/s（地球は小走り、月はもっさり歩き）
-const JUMP_PUSH = { earth: 1.0, moon: 1.2 };  // スティックをたおしきってジャンプしたときの上乗せ速さ
+// ジャンプボタンを押す長さで3段階（月で約1m・約3m・約7m進む。地球でも同じ強さでけるが、すぐ落ちるので短い）
+const JUMP_STAGE_TIME = [0.4, 0.9];               // これより長く押すと 2段・3段
+const JUMP_STAGE_SPEED = [1/3.86, 3/3.86, 7/3.86]; // 横向きの速さ m/s
 const PR = 0.35;                        // プレイヤーの半径
 const AREA = 68;                        // 歩ける範囲（±）
 const TURN = { ground: 7, air: 0.35 };  // 向きを変える速さ（空中では体を少しひねれるだけ）
@@ -160,7 +166,7 @@ const S = {
 const player = { x:0, y:0, z:3, vx:0, vz:0, vy:0, grounded:true, facing:Math.PI,
   jump:null, phase:0, stride:0, moveAmt:0,
   state:'normal', st:0, tilt:0, tiltV:0, cool:0 };
-const input = { jx:0, jy:0, keys:{}, jumpQueued:false };
+const input = { jx:0, jy:0, keys:{}, jumpQueued:false, jumpStage:1, charging:false, chargeT:0 };
 let timers = [];
 const later = (sec, fn) => { timers.push({ t: S.elapsed + sec, fn, id: S.runId }); };
 
@@ -725,7 +731,7 @@ function showIntro(resume){
     <h2>そうさ</h2>
     <div class="cards">
       <div class="card">${ICON.joy}ひだりしたの スティックで あるく</div>
-      <div class="card">${ICON.jump}「ジャンプ」で とぶ。スティックを たおすほど とおくへ</div>
+      <div class="card">${ICON.jump}「ジャンプ」を 長く おすほど とおくへ（●→●●→●●●）。スティックを たおさないと 真上に とぶ</div>
       <div class="card">${ICON.drag}がめんを ゆびで なぞると みる むきが かわる</div>
       <div class="card">${ICON.mode}みぎうえの ボタンで 地球と 月を きりかえ</div>
       <div class="card">${ICON.timer}じかんは ${TIME_LIMIT/60}ぷん</div>
@@ -856,7 +862,17 @@ joy.addEventListener('pointerdown', e => { ensureAudio(); joyId = e.pointerId; j
 joy.addEventListener('pointermove', e => { if (e.pointerId === joyId) joyUpdate(e); });
 const joyEnd = e => { if (e.pointerId === joyId){ joyId = null; input.jx = input.jy = 0; knob.style.transform = ''; } };
 joy.addEventListener('pointerup', joyEnd); joy.addEventListener('pointercancel', joyEnd);
-$('jumpBtn').addEventListener('pointerdown', e => { e.preventDefault(); ensureAudio(); input.jumpQueued = true; });
+const jumpBtn = $('jumpBtn'), gaugeDots = [...document.querySelectorAll('#jumpGauge i')];
+const chargeStage = () => input.chargeT < JUMP_STAGE_TIME[0] ? 1 : input.chargeT < JUMP_STAGE_TIME[1] ? 2 : 3;
+function chargeStart(){ ensureAudio(); if (input.charging) return; input.charging = true; input.chargeT = 0; }
+function chargeEnd(){ if (!input.charging) return; input.charging = false; input.jumpStage = chargeStage(); input.jumpQueued = true; }
+function renderGauge(){
+  const n = input.charging ? chargeStage() : 0;
+  gaugeDots.forEach((d, i) => d.classList.toggle('on', i < n));
+}
+jumpBtn.addEventListener('pointerdown', e => { e.preventDefault(); jumpBtn.setPointerCapture(e.pointerId); chargeStart(); });
+jumpBtn.addEventListener('pointerup', chargeEnd);
+jumpBtn.addEventListener('pointercancel', chargeEnd);
 
 /* カメラ操作：右になぞると右が見える */
 const cv = renderer.domElement; let dragId = null, lastX = 0, lastY = 0;
@@ -869,8 +885,8 @@ cv.addEventListener('pointermove', e => {
 });
 const dragEnd = e => { if (e.pointerId === dragId) dragId = null; };
 cv.addEventListener('pointerup', dragEnd); cv.addEventListener('pointercancel', dragEnd);
-addEventListener('keydown', e => { input.keys[e.code] = true; if (e.code === 'Space'){ input.jumpQueued = true; e.preventDefault(); } });
-addEventListener('keyup', e => { input.keys[e.code] = false; });
+addEventListener('keydown', e => { if (e.code === 'Space'){ if (!e.repeat) chargeStart(); e.preventDefault(); } input.keys[e.code] = true; });
+addEventListener('keyup', e => { input.keys[e.code] = false; if (e.code === 'Space') chargeEnd(); });
 
 /* =========================================================
    バランス：よろける・こける
@@ -971,12 +987,13 @@ function updatePlayer(dt){
   // ジャンプ
   if (input.jumpQueued && player.grounded && player.state === 'normal'){
     player.vy = V0; player.grounded = false;
-    // たおさず→その場で真上、たおすほど遠くへ（高さはいつも同じなので記録に影響しない）
-    const push = Math.min(1, mlen);
-    if (push < 0.08){ player.vx = 0; player.vz = 0; }
+    // スティックをたおしていない→真上。たおしている→その向きへ、押した長さの段階で進む
+    // （高さはいつも同じなので、ミッション1の記録に影響しない）
+    if (mlen < 0.15){ player.vx = 0; player.vz = 0; }
     else {
-      const sp = (WALK[S.mode] + JUMP_PUSH[S.mode]) * push;
+      const sp = JUMP_STAGE_SPEED[input.jumpStage - 1];
       player.vx = mx/mlen * sp; player.vz = mz/mlen * sp;
+      player.facing = Math.atan2(mx, mz);
     }
     player.jump = { startY: player.y, maxY: player.y, t0: S.elapsed, mode: S.mode, mixed: false };
     sfx.jump();
@@ -1127,6 +1144,8 @@ function loop(){
     timers = timers.filter(t => t.t > now && t.id === S.runId);
     due.forEach(t => t.fn());
     if (!S.paused){
+      if (input.charging) input.chargeT += dt;
+      renderGauge();
       updateTimer(dt);
       updatePlayer(dt);
       updateStones();
@@ -1148,7 +1167,7 @@ window.__G = {
   get frames(){ return S.frames; },
   get elapsed(){ return S.elapsed; },
   api: {
-    setMode, jump(){ input.jumpQueued = true; },
+    setMode, jump(stage=1){ input.jumpStage = stage; input.jumpQueued = true; },
     setInput(x, y){ input.jx = x; input.jy = y; },
     teleport(x, y, z){ Object.assign(player, { x, y, z, vx:0, vz:0, vy:0, grounded:false }); },
     fall: startFall, wobble: startWobble, groundH,
