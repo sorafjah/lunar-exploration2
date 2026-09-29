@@ -7,7 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>月面たんさミッション</title>
+<title>月面探索２</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap" rel="stylesheet">
@@ -75,7 +75,7 @@
 </style>
 </head>
 <body>
-<!-- build: 2026-09-29b -->
+<!-- build: 2026-09-29c -->
 
 <div id="mission"></div>
 <div id="timer"></div>
@@ -93,7 +93,7 @@
 
 <div id="radio"></div>
 <div id="toast"></div>
-<div id="ver">v2026-09-29b</div>
+<div id="ver">v2026-09-29c</div>
 
 <div id="intro" class="overlay"><div class="panel scroll" id="introPanel"></div></div>
 <div id="result" class="overlay"><div class="panel scroll" id="resultPanel"></div></div>
@@ -130,7 +130,7 @@ const FURI = {
   '地球':'ちきゅう','月面':'げつめん','月':'つき','空中':'くうちゅう','空気':'くうき',
   '時間':'じかん','高':'たか','秒':'びょう','基地':'きち','石':'いし','岩':'いわ',
   '重力':'じゅうりょく','倍':'ばい','音':'おと','無線':'むせん','光':'ひか','回':'かい',
-  '分':'ふん','体':'からだ','落':'お'
+  '分':'ふん','体':'からだ','落':'お','探索':'たんさく','探査機':'たんさき','管制室':'かんせいしつ'
 };
 const furiRe = new RegExp(Object.keys(FURI).sort((a,b)=>b.length-a.length).join('|'), 'g');
 const furi = s => s.replace(furiRe, m => `<ruby>${m}<rt>${FURI[m]}</rt></ruby>`);
@@ -139,13 +139,13 @@ const fmt = v => v < 1 ? (Math.round(v*10)/10).toFixed(1) : String(Math.round(v)
 /* =========================================================
    定数（調整しやすいようにここにまとめる）
    ========================================================= */
-const TIME_LIMIT = 180;                 // 制限時間（秒）
+const TIME_LIMIT = 120;                 // 制限時間（秒）
 const G = { earth: 9.8, moon: 1.62 };
 const V0 = Math.sqrt(2 * 9.8 * 0.5);   // 地球で約0.5m跳べる初速（月では約3m）
 const WALK = 2.2;                       // 歩く速さ m/s
 const PR = 0.35;                        // プレイヤーの半径
 const AREA = 68;                        // 歩ける範囲（±）
-const TURN = { ground: 7, airEarth: 2.5, airMoon: 0.9 };  // 向きを変える速さ
+const TURN = { ground: 7, air: 0.35 };  // 向きを変える速さ（空中では体を少しひねれるだけ）
 
 /* =========================================================
    状態
@@ -154,7 +154,7 @@ const S = {
   mode: 'moon', mission: 1, paused: true, started: false, frames: 0, renderFrames: 0, elapsed: 0,
   timeLeft: TIME_LIMIT, warned: false, result: null,
   rec: { jump: { earth: null, moon: null }, stones: 0, falls: 0, clearTime: null },
-  said: {}, runId: 0
+  said: {}, runId: 0, sameModeJumps: 0
 };
 const player = { x:0, y:0, z:3, vx:0, vz:0, vy:0, grounded:true, facing:Math.PI,
   jump:null, phase:0, stride:0, moveAmt:0,
@@ -207,7 +207,7 @@ const colliders = [
   { x:-26, z:10,  r:1.6, h:2.1 },
 ];
 const BASE = { x:0, z:9 };
-colliders.push({ x:BASE.x, z:BASE.z+1, r:1.8, h:1.5, base:true });
+colliders.push({ x:BASE.x, z:BASE.z+1, r:1.5, h:3.4, base:true });
 
 // クレーター：お椀型にへこみ、ふちが少しもり上がる
 const craters = [];
@@ -234,7 +234,26 @@ function craterH(x, z){
   }
   return h;
 }
-const groundH = (x, z) => S.mode === 'moon' ? craterH(x, z) : 0;
+// 丘：なだらかなもり上がり（月の高地のイメージ）
+const hills = [];
+{
+  for (let i=0; i<3000 && hills.length<6; i++){
+    const W = 9 + Math.random()*8, H = 2 + Math.random()*2.5;
+    const x = (Math.random()-.5)*2*(AREA-5), z = (Math.random()-.5)*2*(AREA-5);
+    if (Math.hypot(x, z-3) < W*2 + 6 || Math.hypot(x-BASE.x, z-BASE.z) < W*2 + 6) continue;
+    if (colliders.some(c => Math.hypot(x-c.x, z-c.z) < c.r + W*2)) continue;
+    if (craters.some(k => Math.hypot(x-k.x, z-k.z) < k.R*1.5 + W*1.6)) continue;
+    if (hills.some(h => Math.hypot(x-h.x, z-h.z) < (h.W + W)*1.8)) continue;
+    hills.push({ x, z, W, H });
+  }
+}
+function hillH(x, z){
+  let h = 0;
+  for (const k of hills){ const d2 = ((x-k.x)**2 + (z-k.z)**2) / (k.W*k.W); if (d2 < 9) h += k.H * Math.exp(-d2); }
+  return h;
+}
+const terrainH = (x, z) => craterH(x, z) + hillH(x, z);
+const groundH = (x, z) => S.mode === 'moon' ? terrainH(x, z) : 0;
 function slopeAt(x, z){
   const e = 0.25;
   const dx = (groundH(x+e,z) - groundH(x-e,z)) / (2*e), dz = (groundH(x,z+e) - groundH(x,z-e)) / (2*e);
@@ -293,7 +312,7 @@ scene.add(earthEnv, moonEnv);
   geo.rotateX(-Math.PI/2);
   const p = geo.attributes.position, col = [];
   for (let i=0;i<p.count;i++){
-    const x = p.getX(i), z = p.getZ(i), h = craterH(x, z);
+    const x = p.getX(i), z = p.getZ(i), h = terrainH(x, z);
     p.setY(i, h);
     const k = h < 0 ? 0.78 + 0.22*(1 + h/2.2) : 1;   // くぼみは少し暗く
     col.push(k, k, k);
@@ -321,15 +340,15 @@ const rockMat = {
 const rockMeshes = [];
 for (const c of colliders){
   if (c.base) continue;
-  const geo = new THREE.CylinderGeometry(c.r*0.88, c.r*1.05, c.h, 8, 3);
-  geo.translate(0, c.h/2, 0);
-  const p = geo.attributes.position;
+  // 丸みのある大岩（上は少し平らで、乗ることができる）
+  const geo = new THREE.IcosahedronGeometry(1, 2);
+  const p = geo.attributes.position, jit = new Map();
   for (let i=0;i<p.count;i++){
-    const y = p.getY(i);
-    if (y > 0.001 && y < c.h - 0.001){
-      p.setX(i, p.getX(i) + (Math.random()-.5)*c.r*0.25);
-      p.setZ(i, p.getZ(i) + (Math.random()-.5)*c.r*0.25);
-    }
+    const x0 = p.getX(i), y0 = p.getY(i), z0 = p.getZ(i);
+    const key = `${x0.toFixed(3)},${y0.toFixed(3)},${z0.toFixed(3)}`;
+    if (!jit.has(key)) jit.set(key, 0.9 + Math.random()*0.2);
+    const j = jit.get(key);
+    p.setXYZ(i, x0*c.r*1.08*j, Math.min(c.h, (y0+1)/2 * c.h * 1.25), z0*c.r*1.08*j);
   }
   geo.computeVertexNormals();
   const m = new THREE.Mesh(geo, rockMat.moon);
@@ -344,7 +363,7 @@ const tripRocks = [];
   for (let i=0; i<4000 && tripRocks.length<55; i++){
     const x = (Math.random()-.5)*2*(AREA-2), z = (Math.random()-.5)*2*(AREA-2), r = 0.22 + Math.random()*0.18;
     if (Math.hypot(x, z-3) < 5 || Math.hypot(x-BASE.x, z-BASE.z) < 6) continue;
-    if (insideCrater(x, z, 1.55)) continue;
+    if (insideCrater(x, z, 1.55) || hillH(x, z) > 0.02) continue;
     if (colliders.some(c => Math.hypot(x-c.x, z-c.z) < c.r + 2)) continue;
     if (tripRocks.some(t => Math.hypot(x-t.x, z-t.z) < 4)) continue;
     const m = new THREE.Mesh(geo, rockMat.moon);
@@ -356,22 +375,29 @@ const tripRocks = [];
 }
 
 /* 基地 */
+/* 着陸した探査機 */
 {
-  const pad = new THREE.Mesh(new THREE.CircleGeometry(3.6, 40), new THREE.MeshStandardMaterial({ color:0xd9d9d9, roughness:.9 }));
-  pad.rotation.x = -Math.PI/2; pad.position.set(BASE.x, 0.02, BASE.z); pad.receiveShadow = true; scene.add(pad);
-  const ring = new THREE.Mesh(new THREE.RingGeometry(3.2, 3.5, 40), new THREE.MeshBasicMaterial({ color:0xffb300 }));
-  ring.rotation.x = -Math.PI/2; ring.position.set(BASE.x, 0.03, BASE.z); scene.add(ring);
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(1.8, 24, 12, 0, Math.PI*2, 0, Math.PI/2),
-    new THREE.MeshStandardMaterial({ color:0xf5f5f5, roughness:.5 }));
-  dome.position.set(BASE.x, 0, BASE.z+1); dome.castShadow = dome.receiveShadow = true; scene.add(dome);
-  const door = new THREE.Mesh(new THREE.BoxGeometry(0.8,1.1,0.3), new THREE.MeshStandardMaterial({ color:0x455a64 }));
-  door.position.set(BASE.x, 0.55, BASE.z-0.6); scene.add(door);
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,3), new THREE.MeshStandardMaterial({ color:0xcccccc, metalness:.6 }));
-  pole.position.set(BASE.x+2.6, 1.5, BASE.z); pole.castShadow = true; scene.add(pole);
-  const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.1,0.7), new THREE.MeshStandardMaterial({ color:0xffffff, side:THREE.DoubleSide }));
-  flag.position.set(BASE.x+3.15, 2.6, BASE.z); flag.castShadow = true; scene.add(flag);
-  const mark = new THREE.Mesh(new THREE.CircleGeometry(0.18, 20), new THREE.MeshBasicMaterial({ color:0xd32f2f, side:THREE.DoubleSide }));
-  mark.position.set(BASE.x+3.15, 2.6, 0.005+BASE.z); scene.add(mark);
+  const L = new THREE.Group(); L.position.set(BASE.x, 0, BASE.z + 1); L.rotation.y = 0.4; scene.add(L);
+  const M = (c, o={}) => new THREE.MeshStandardMaterial({ color:c, roughness:.6, ...o });
+  const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x,y,z); m.castShadow = m.receiveShadow = true; L.add(m); return m; };
+  const foil = M(0xd8a33a, { metalness:.8, roughness:.35 }), silver = M(0xb8bcc2, { metalness:.7, roughness:.3 }), grey = M(0x9aa0a6, { flatShading:true });
+  add(new THREE.CylinderGeometry(1.35, 1.35, 1.1, 8), foil, 0, 1.25, 0);                  // 下の部分（金色）
+  add(new THREE.BoxGeometry(1.7, 1.2, 1.5), grey, 0, 2.4, 0);                               // 上の部分
+  add(new THREE.CylinderGeometry(0.35, 0.35, 0.5, 12), grey, 0, 3.15, 0);
+  const win = add(new THREE.BoxGeometry(0.5, 0.35, 0.05), M(0x1a2330, { metalness:.5, roughness:.1 }), 0.35, 2.55, 0.76); win.rotation.y = 0;
+  add(new THREE.CylinderGeometry(0.03, 0.03, 0.8), silver, -0.6, 3.3, -0.4);               // アンテナ
+  const dish = add(new THREE.SphereGeometry(0.3, 12, 6, 0, Math.PI*2, 0, Math.PI/3), silver, -0.6, 3.75, -0.4); dish.rotation.x = Math.PI;
+  for (let i=0;i<4;i++){                                                                    // 4本の脚
+    const a = Math.PI/4 + i*Math.PI/2, cx = Math.cos(a), cz = Math.sin(a);
+    const leg = add(new THREE.CylinderGeometry(0.06, 0.06, 1.9), silver, cx*1.75, 0.85, cz*1.75);
+    leg.rotation.set(cz*0.45, 0, -cx*0.45);
+    add(new THREE.CylinderGeometry(0.35, 0.4, 0.08, 16), silver, cx*2.15, 0.04, cz*2.15);  // 足のパッド
+  }
+  for (let k=0;k<5;k++) add(new THREE.BoxGeometry(0.5, 0.04, 0.08), silver, 0, 0.35 + k*0.2, 1.42);  // はしご
+}
+{
+    const ring = new THREE.Mesh(new THREE.RingGeometry(3.4, 3.7, 40), new THREE.MeshBasicMaterial({ color:0xffb300 }));
+  ring.rotation.x = -Math.PI/2; ring.position.set(BASE.x, 0.03, BASE.z + 1); scene.add(ring);
 }
 
 /* 月の空：星・地球・太陽 */
@@ -383,7 +409,13 @@ const tripRocks = [];
   }
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
   moonEnv.add(new THREE.Points(g, new THREE.PointsMaterial({ color:0xffffff, size:1.6, sizeAttenuation:false, fog:false })));
-  const globe = new THREE.Mesh(new THREE.SphereGeometry(24, 32, 16), new THREE.MeshBasicMaterial({ map: globeTex(), fog:false }));
+  const globe = new THREE.Mesh(new THREE.SphereGeometry(24, 48, 24), new THREE.MeshBasicMaterial({ map: globeTex(), fog:false }));
+  // 同じフォルダの earth1024.jpg を貼る（読めないときは手描きの地球のまま）
+  new THREE.TextureLoader().load('earth1024.jpg?v=20260929', t => {
+    t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+    globe.material.map = t; globe.material.needsUpdate = true;
+  }, undefined, () => {});
+  globe.rotation.y = -1.2;
   globe.position.copy(new THREE.Vector3(0.35,0.3,-1).normalize().multiplyScalar(420));
   moonEnv.add(globe);
   const ms = new THREE.Mesh(new THREE.SphereGeometry(10,16,8), new THREE.MeshBasicMaterial({ color:0xffffff, fog:false }));
@@ -521,24 +553,19 @@ const stones = [0,1,2].map(() => {
   g.add(rock, beam, ring); g.visible = false; scene.add(g);
   return { g, ring, collected:false, spot:null };
 });
-// 石の候補：高い岩の上（月のジャンプで届く）・クレーターの底・ふつうの地面
+// 石の場所：毎回ランダム。2こはクレーターの中、1こはクレーターか大岩の上
 function pickStoneSpots(){
   const far = (x,z) => Math.hypot(x, z-3) > 10 && Math.hypot(x-BASE.x, z-BASE.z) > 8;
-  const high = colliders.filter(c => !c.base && c.h >= 2 && far(c.x, c.z)).map(c => ({ kind:'rock', x:c.x, z:c.z, h:c.h }));
-  const pool = [
-    ...colliders.filter(c => !c.base && c.h < 2 && far(c.x, c.z)).map(c => ({ kind:'rock', x:c.x, z:c.z, h:c.h })),
-    ...craters.filter(k => far(k.x, k.z) && Math.hypot(k.x, k.z) < 50).map(k => ({ kind:'crater', x:k.x, z:k.z })),
-  ];
-  for (let i=0;i<40;i++){
-    const x = (Math.random()-.5)*80, z = (Math.random()-.5)*80;
-    if (far(x,z) && !insideCrater(x,z,1.6) && !colliders.some(c => Math.hypot(x-c.x,z-c.z) < c.r+1.5)) pool.push({ kind:'ground', x, z });
-  }
   const shuffle = a => { for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
-  const chosen = [shuffle(high)[0]];   // 1つは高い岩の上（月の力を使う）
-  for (const s of shuffle(pool)){
-    if (chosen.length >= 3) break;
-    if (chosen.every(c => Math.hypot(c.x-s.x, c.z-s.z) > 12)) chosen.push(s);
-  }
+  const inCrater = k => { const a = Math.random()*Math.PI*2, d = Math.random()*k.R*0.45;
+    return { kind:'crater', x:k.x + Math.cos(a)*d, z:k.z + Math.sin(a)*d }; };
+  const cr = shuffle(craters.filter(k => far(k.x, k.z) && Math.hypot(k.x, k.z) < 50));
+  const high = colliders.filter(c => !c.base && c.h >= 2 && far(c.x, c.z)).map(c => ({ kind:'rock', x:c.x, z:c.z, h:c.h }));
+  const chosen = [];
+  const tryAdd = s => { if (chosen.length < 3 && chosen.every(c => Math.hypot(c.x-s.x, c.z-s.z) > 12)){ chosen.push(s); return true; } return false; };
+  let n = 0;
+  for (const k of cr){ if (n >= 2) break; if (tryAdd(inCrater(k))) n++; }
+  for (const s of shuffle([...cr.map(inCrater), ...high])) tryAdd(s);
   return chosen;
 }
 function spotY(sp){
@@ -550,7 +577,7 @@ function placeStones(){
 }
 const baseBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 20, 16, 1, true),
   new THREE.MeshBasicMaterial({ color:0x5dffa6, transparent:true, opacity:.25, depthWrite:false, fog:false }));
-baseBeam.position.set(BASE.x, 10, BASE.z - 1.5); baseBeam.visible = false; scene.add(baseBeam);
+baseBeam.position.set(BASE.x, 10, BASE.z + 1); baseBeam.visible = false; scene.add(baseBeam);
 
 /* 床の高さ（地面・クレーター・岩の上） */
 function floorAt(x, z, refY){
@@ -641,7 +668,7 @@ function renderMission(){
       ? `<div class="mt">ミッション2　石を あつめよう</div>
          <div class="ms">光っている 石を あつめる</div>
          <div class="chk">石　${r.stones} / 3</div>`
-      : `<div class="mt">ミッション2　基地に もどろう</div>
+      : `<div class="mt">ミッション2　探査機に もどろう</div>
          <div class="ms">みどりの 光の ところへ</div>
          <div class="chk">石　3 / 3 ✅</div>`;
   } else {
@@ -652,7 +679,7 @@ function renderMission(){
 
 /* 地球・月のきりかえ */
 function setMode(m){
-  S.mode = m;
+  S.mode = m; S.sameModeJumps = 0;
   const moon = m === 'moon';
   $('btnEarth').classList.toggle('on', !moon);
   $('btnMoon').classList.toggle('on', moon);
@@ -685,7 +712,7 @@ const ICON = {
 function showIntro(resume){
   S.paused = true;
   $('introPanel').innerHTML = furi(`
-    <h1>月面たんさミッション</h1>
+    <h1>月面探索２</h1>
     <h2>そうさ</h2>
     <div class="cards">
       <div class="card">${ICON.joy}ひだりしたの スティックで あるく</div>
@@ -697,7 +724,7 @@ function showIntro(resume){
     <h2>ミッション</h2>
     <ol class="mlist">
       <li>地球と 月で ジャンプして、高さを くらべよう</li>
-      <li>光っている 石を 3こ あつめて、基地に もどろう</li>
+      <li>光っている 石を 3こ あつめて、探査機に もどろう</li>
     </ol>
     <div class="note">📡 月には 空気が ないので、音が きこえません。なかまの こえは 無線で とどきます。<br>⚠️ 石や クレーターで バランスを くずすことが あるよ。</div>
   `) + `<button class="bigBtn" id="startBtn">${resume ? 'つづける' : 'はじめる'}</button>`;
@@ -708,7 +735,7 @@ function showIntro(resume){
     S.paused = false;
     if (!resume){
       S.started = true;
-      radio('こちら 基地。ミッション1を はじめよう。地球と 月で 1かいずつ ジャンプして、高さを はかってね。', 8);
+      radio('こちら 管制室。ミッション1を はじめよう。地球と 月で 1かいずつ ジャンプして、高さを はかってね。', 8);
     }
   });
 }
@@ -758,7 +785,7 @@ function onJumpMeasured(h, t, m){
     later(3, () => {
       S.mission = 2; renderMission();
       stones.forEach(s => s.g.visible = true);
-      radio('光っている 石を 3こ あつめて、基地に もどろう。高い 岩の うえの 石は、月の ジャンプなら とどくよ。', 9);
+      radio('光っている 石を 3こ あつめて、探査機に もどろう。石は クレーターの 中に あることが おおいよ。', 9);
     });
   } else {
     radio(`いいね！ つぎは ${other(m)}で とんでみよう。みぎうえの ボタンで きりかえてね。`);
@@ -773,7 +800,7 @@ function updateStones(){
     if (Math.hypot(px - p.x, py - (p.y + 0.22), pz - p.z) < 1.35){
       s.collected = true; s.g.visible = false; S.rec.stones++;
       sfx.collect(); renderMission();
-      if (S.rec.stones >= 3){ baseBeam.visible = true; radio('石を ぜんぶ あつめたね！ みどりの 光の 基地に もどろう。'); }
+      if (S.rec.stones >= 3){ baseBeam.visible = true; radio('石を ぜんぶ あつめたね！ みどりの 光の 探査機に もどろう。'); }
       else toast(furi(`石 ${S.rec.stones} / 3`), 2);
     }
     if (S.mode === 'earth' && s.spot.kind === 'rock' && s.spot.h > 1.5 && Math.hypot(px - p.x, pz - p.z) < 3.5)
@@ -792,7 +819,7 @@ function updateTimer(dt){
   if (S.timeLeft <= 30 && !S.warned){ S.warned = true; radio('のこり 30秒！ いそいで！', 4); }
   if (S.timeLeft <= 0){
     S.timeLeft = 0; S.mission = 3;
-    sfx.timeup(); radio('じかん ぎれだ。基地に もどって きてね。', 4);
+    sfx.timeup(); radio('じかん ぎれだ。探査機に もどって きてね。', 4);
     later(1.5, () => showResult('timeup'));
   }
   renderTimer();
@@ -901,12 +928,12 @@ function updatePlayer(dt){
   if (mlen > 0.08){
     const target = Math.atan2(mx, mz);
     let d = target - player.facing; d = Math.atan2(Math.sin(d), Math.cos(d));
-    const rate = player.grounded ? TURN.ground : (S.mode === 'moon' ? TURN.airMoon : TURN.airEarth);
+    const rate = player.grounded ? TURN.ground : TURN.air;
     player.facing += d * Math.min(1, rate*dt);
   }
   const speedMul = player.state === 'wobble' ? 0.35 : 1;
-  if (canMove){
-    const acc = player.grounded ? 10 : (S.mode === 'moon' ? 1.0 : 3);
+  if (canMove && player.grounded){          // 空中では足で地面をけれないので、進む向きは変わらない
+    const acc = 10;
     const a = Math.min(1, acc*dt);
     player.vx += (mx*WALK*speedMul - player.vx) * a;
     player.vz += (mz*WALK*speedMul - player.vz) * a;
@@ -956,7 +983,7 @@ function updatePlayer(dt){
   const sp = Math.hypot(player.vx, player.vz);
   player.moveAmt = Math.min(1, sp / WALK);
   if (player.grounded && canMove && player.moveAmt > 0.1){
-    player.phase += dt * player.moveAmt * (S.mode === 'moon' ? 5.5 : 8.5);
+    player.phase += dt * player.moveAmt * (S.mode === 'moon' ? 3.4 : 6.5);
     const st = Math.floor(player.phase / Math.PI);
     if (st !== player.stride){
       player.stride = st;
@@ -988,9 +1015,21 @@ function onLand(){
   if (j && !j.mixed && j.mode === S.mode && Math.abs(player.y - j.startY) < 0.15){
     onJumpMeasured(j.maxY - j.startY, S.elapsed - j.t0, S.mode);
   }
+  if (j && S.mission === 1){
+    S.sameModeJumps++;
+    const m = S.mode, o = m === 'moon' ? 'earth' : 'moon';
+    if (S.sameModeJumps >= 3 && !S.rec.jump[o]){
+      S.sameModeJumps = -99;   // 案内中は数えない
+      later(3, () => {
+        if (S.mission !== 1 || S.mode !== m) { S.sameModeJumps = 0; return; }
+        radio(`こんどは ${other(m)}で とんでみよう。${other(m)}に きりかえるよ！`, 6);
+        setMode(o);
+      });
+    }
+  }
 }
 function poseRig(){
-  const r = rigs[S.mode], t = S.elapsed;
+  const r = rigs[S.mode], t = S.elapsed; let bob = 0;
   r.armL.rotation.z = r.armR.rotation.z = 0;
   tiltGroup.rotation.z = 0;
   if (player.state === 'fall' || player.state === 'down' || player.state === 'getup'){
@@ -1001,9 +1040,14 @@ function poseRig(){
     r.armL.rotation.x = r.armR.rotation.x = -0.4;
     r.armL.rotation.z = 0.5; r.armR.rotation.z = -0.5;
   } else {
-    const s = Math.sin(player.phase) * 0.7 * player.moveAmt;
+    // もっさり歩き：歩はばは小さめ、体を左右にゆらし、上下にはずむ
+    const heavy = S.mode === 'moon';
+    const s = Math.sin(player.phase) * (heavy ? 0.42 : 0.55) * player.moveAmt;
     r.legL.rotation.x = s; r.legR.rotation.x = -s;
-    r.armL.rotation.x = -s*0.8; r.armR.rotation.x = s*0.8;
+    r.armL.rotation.x = -s*0.5; r.armR.rotation.x = s*0.5;
+    r.armL.rotation.z = heavy ? 0.25 : 0; r.armR.rotation.z = heavy ? -0.25 : 0;
+    tiltGroup.rotation.z = Math.sin(player.phase) * (heavy ? 0.09 : 0.03) * player.moveAmt;
+    bob = Math.abs(Math.sin(player.phase)) * (heavy ? 0.07 : 0.03) * player.moveAmt;
   }
   if (player.state === 'wobble'){
     const k = player.st / 1.1;
@@ -1011,7 +1055,7 @@ function poseRig(){
     r.armL.rotation.z = 1.0 + Math.sin(t*14)*0.5; r.armR.rotation.z = -1.0 - Math.sin(t*14+1)*0.5;
   }
   tiltGroup.rotation.x = player.tilt;
-  playerGroup.position.set(player.x, player.y, player.z);
+  playerGroup.position.set(player.x, player.y + bob, player.z);
   playerGroup.rotation.y = player.facing;
 }
 
@@ -1034,7 +1078,7 @@ function resetGame(){
   S.runId++; timers = [];
   S.mission = 1; S.elapsed = 0; S.started = false; S.timeLeft = TIME_LIMIT; S.warned = false; S.result = null;
   S.rec = { jump:{ earth:null, moon:null }, stones:0, falls:0, clearTime:null };
-  S.said = {};
+  S.said = {}; S.sameModeJumps = 0;
   Object.assign(player, { x:0, y:0, z:3, vx:0, vz:0, vy:0, grounded:true, facing:Math.PI, jump:null, phase:0, stride:0, moveAmt:0,
     state:'normal', st:0, tilt:0, tiltV:0, cool:0 });
   cam.yaw = 0; cam.pitch = 0.32; cam.target.set(0, 1.2, 3);
