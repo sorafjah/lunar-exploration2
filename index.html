@@ -44,10 +44,6 @@
   #jumpBtn{position:fixed;right:30px;bottom:34px;width:124px;height:124px;border-radius:50%;
     border:4px solid #fff;background:#ff8a3d;color:#fff;font-size:22px;font-weight:700;touch-action:none;box-shadow:0 4px 12px rgba(0,0,0,.5);}
   #jumpBtn:active{transform:scale(.94);}
-  #jumpBtn span{display:block;pointer-events:none;}
-  #jumpGauge{margin-top:6px;display:flex !important;justify-content:center;gap:6px;}
-  #jumpGauge i{width:16px;height:16px;border-radius:50%;border:2px solid #fff;background:transparent;}
-  #jumpGauge i.on{background:#fff;}
 
   #radio{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);width:min(46vw,480px);
     background:rgba(10,30,20,.85);border:2px solid #5dffa6;border-radius:14px;padding:8px 14px;
@@ -79,7 +75,7 @@
 </style>
 </head>
 <body>
-<!-- build: 2026-09-29g -->
+<!-- build: 2026-09-29i -->
 
 <div id="mission"></div>
 <div id="timer"></div>
@@ -93,11 +89,11 @@
 </div>
 
 <div id="joy"><div id="knob"></div><div id="joyLabel">あるく</div></div>
-<button id="jumpBtn"><span>ジャンプ</span><span id="jumpGauge"><i></i><i></i><i></i></span></button>
+<button id="jumpBtn">ジャンプ</button>
 
 <div id="radio"></div>
 <div id="toast"></div>
-<div id="ver">v2026-09-29g</div>
+<div id="ver">v2026-09-29i</div>
 
 <div id="intro" class="overlay"><div class="panel scroll" id="introPanel"></div></div>
 <div id="result" class="overlay"><div class="panel scroll" id="resultPanel"></div></div>
@@ -147,9 +143,10 @@ const TIME_LIMIT = 180;                 // 制限時間（秒）
 const G = { earth: 9.8, moon: 1.62 };
 const V0 = Math.sqrt(2 * 9.8 * 0.5);   // 地球で約0.5m跳べる初速（月では約3m）
 const WALK = { earth: 3.6, moon: 2.2 };  // 移動の速さ m/s（地球は小走り、月はもっさり歩き）
-// ジャンプボタンを押す長さで3段階（月で約1m・約3m・約7m進む。地球でも同じ強さでけるが、すぐ落ちるので短い）
-const JUMP_STAGE_TIME = [0.4, 0.9];               // これより長く押すと 2段・3段
-const JUMP_STAGE_SPEED = [1/3.86, 3/3.86, 7/3.86]; // 横向きの速さ m/s
+// スティックをたおしてジャンプ：タップで月で約2m、長押しで約6m進む（月の空中は約3.9秒）
+// 地球でも同じ強さでけるが、すぐ落ちるので短い。スティックをたおさなければ真上。
+const JUMP_LONG_PRESS = 0.4;                       // これより長く押すと長押し（秒）
+const JUMP_STAGE_SPEED = [2/3.86, 6/3.86];         // 横向きの速さ m/s（[タップ, 長押し]）
 const PR = 0.35;                        // プレイヤーの半径
 const AREA = 68;                        // 歩ける範囲（±）
 const TURN = { ground: 7, air: 0.35 };  // 向きを変える速さ（空中では体を少しひねれるだけ）
@@ -731,7 +728,7 @@ function showIntro(resume){
     <h2>そうさ</h2>
     <div class="cards">
       <div class="card">${ICON.joy}ひだりしたの スティックで あるく</div>
-      <div class="card">${ICON.jump}「ジャンプ」を 長く おすほど とおくへ（●→●●→●●●）。スティックを たおさないと 真上に とぶ</div>
+      <div class="card">${ICON.jump}スティックを たおして「ジャンプ」。タップで ちかく、ながおしで とおくへ。たおさないと 真上に とぶ</div>
       <div class="card">${ICON.drag}がめんを ゆびで なぞると みる むきが かわる</div>
       <div class="card">${ICON.mode}みぎうえの ボタンで 地球と 月を きりかえ</div>
       <div class="card">${ICON.timer}じかんは ${TIME_LIMIT/60}ぷん</div>
@@ -862,15 +859,15 @@ joy.addEventListener('pointerdown', e => { ensureAudio(); joyId = e.pointerId; j
 joy.addEventListener('pointermove', e => { if (e.pointerId === joyId) joyUpdate(e); });
 const joyEnd = e => { if (e.pointerId === joyId){ joyId = null; input.jx = input.jy = 0; knob.style.transform = ''; } };
 joy.addEventListener('pointerup', joyEnd); joy.addEventListener('pointercancel', joyEnd);
-const jumpBtn = $('jumpBtn'), gaugeDots = [...document.querySelectorAll('#jumpGauge i')];
-const chargeStage = () => input.chargeT < JUMP_STAGE_TIME[0] ? 1 : input.chargeT < JUMP_STAGE_TIME[1] ? 2 : 3;
-function chargeStart(){ ensureAudio(); if (input.charging) return; input.charging = true; input.chargeT = 0; }
-function chargeEnd(){ if (!input.charging) return; input.charging = false; input.jumpStage = chargeStage(); input.jumpQueued = true; }
-function renderGauge(){
-  const n = input.charging ? chargeStage() : 0;
-  gaugeDots.forEach((d, i) => d.classList.toggle('on', i < n));
+const jumpBtn = $('jumpBtn');
+// 押した時刻・離した時刻は、イベントが起きた時刻(e.timeStamp)で測る（描画がおくれても正しく判定できる）
+function chargeStart(e){ ensureAudio(); if (input.charging) return; input.charging = true; input.chargeT = e.timeStamp; }
+function chargeEnd(e){
+  if (!input.charging) return; input.charging = false;
+  input.jumpStage = (e.timeStamp - input.chargeT)/1000 < JUMP_LONG_PRESS ? 1 : 2;
+  input.jumpQueued = true;
 }
-jumpBtn.addEventListener('pointerdown', e => { e.preventDefault(); jumpBtn.setPointerCapture(e.pointerId); chargeStart(); });
+jumpBtn.addEventListener('pointerdown', e => { e.preventDefault(); try { jumpBtn.setPointerCapture(e.pointerId); } catch (_) {} chargeStart(e); });
 jumpBtn.addEventListener('pointerup', chargeEnd);
 jumpBtn.addEventListener('pointercancel', chargeEnd);
 
@@ -885,8 +882,8 @@ cv.addEventListener('pointermove', e => {
 });
 const dragEnd = e => { if (e.pointerId === dragId) dragId = null; };
 cv.addEventListener('pointerup', dragEnd); cv.addEventListener('pointercancel', dragEnd);
-addEventListener('keydown', e => { if (e.code === 'Space'){ if (!e.repeat) chargeStart(); e.preventDefault(); } input.keys[e.code] = true; });
-addEventListener('keyup', e => { input.keys[e.code] = false; if (e.code === 'Space') chargeEnd(); });
+addEventListener('keydown', e => { if (e.code === 'Space'){ if (!e.repeat) chargeStart(e); e.preventDefault(); } input.keys[e.code] = true; });
+addEventListener('keyup', e => { input.keys[e.code] = false; if (e.code === 'Space') chargeEnd(e); });
 
 /* =========================================================
    バランス：よろける・こける
@@ -1144,8 +1141,6 @@ function loop(){
     timers = timers.filter(t => t.t > now && t.id === S.runId);
     due.forEach(t => t.fn());
     if (!S.paused){
-      if (input.charging) input.chargeT += dt;
-      renderGauge();
       updateTimer(dt);
       updatePlayer(dt);
       updateStones();
