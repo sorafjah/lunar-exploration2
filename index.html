@@ -75,7 +75,7 @@
 </style>
 </head>
 <body>
-<!-- build: 2026-09-29i -->
+<!-- build: 2026-10-01 -->
 
 <div id="mission"></div>
 <div id="timer"></div>
@@ -93,7 +93,7 @@
 
 <div id="radio"></div>
 <div id="toast"></div>
-<div id="ver">v2026-09-29i</div>
+<div id="ver">v2026-10-01</div>
 
 <div id="intro" class="overlay"><div class="panel scroll" id="introPanel"></div></div>
 <div id="result" class="overlay"><div class="panel scroll" id="resultPanel"></div></div>
@@ -672,7 +672,7 @@ function renderMission(){
   const r = S.rec; let h = '';
   if (S.mission < 2){
     h = `<div class="mt">ミッション1　ジャンプを はかろう</div>
-         <div class="ms">地球と 月で 1かいずつ ジャンプ</div>
+         <div class="ms">地球 → 月の じゅんに ジャンプ</div>
          <div class="chk">${ck(r.jump.earth)} 地球　${ck(r.jump.moon)} 月</div>`;
   } else if (S.mission === 2){
     h = r.stones < NSTONE
@@ -711,7 +711,11 @@ function setMode(m){
   if (player.jump) player.jump.mixed = true;
 }
 onTap($('btnEarth'), () => { if (S.mode !== 'earth'){ setMode('earth'); sfx.click(); } });
-onTap($('btnMoon'),  () => { if (S.mode !== 'moon'){ setMode('moon'); sfx.click(); } });
+onTap($('btnMoon'),  () => {
+  if (S.mode === 'moon') return;
+  if (S.mission === 1 && !S.rec.jump.earth){ radio('まずは 地球で ジャンプしてみよう。', 4); return; }
+  setMode('moon'); sfx.click();
+});
 
 /* 説明画面 */
 const ICON = {
@@ -735,7 +739,7 @@ function showIntro(resume){
     </div>
     <h2>ミッション</h2>
     <ol class="mlist">
-      <li>地球と 月で ジャンプして、高さを くらべよう</li>
+      <li>地球 → 月の じゅんに ジャンプして、高さを くらべよう</li>
       <li>月で 光っている 石を 2こ あつめて、探査機に もどろう</li>
     </ol>
     <div class="note">📡 月には 空気が ないので、音が きこえません。なかまの こえは 無線で とどきます。<br>⚠️ 石や クレーターで バランスを くずすことが あるよ。</div>
@@ -747,7 +751,7 @@ function showIntro(resume){
     S.paused = false;
     if (!resume){
       S.started = true;
-      radio('こちら 管制室。ミッション1を はじめよう。地球と 月で 1かいずつ ジャンプして、高さを はかってね。', 8);
+      radio('こちら 管制室。ミッション1を はじめよう。まずは 地球で ジャンプして、高さを はかってね。', 8);
     }
   });
 }
@@ -1123,7 +1127,7 @@ function resetGame(){
   stones.forEach((s, i) => { s.collected = false; s.g.visible = false; s.spot = spots[i]; });
   baseBeam.visible = false;
   radioEl.style.display = 'none'; toastEl.style.display = 'none';
-  setMode('moon'); renderMission(); renderTimer(); poseRig();
+  setMode('earth'); renderMission(); renderTimer(); poseRig();
 }
 
 /* =========================================================
