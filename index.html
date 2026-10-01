@@ -75,7 +75,7 @@
 </style>
 </head>
 <body>
-<!-- build: 2026-10-02b -->
+<!-- build: 2026-10-02c -->
 
 <div id="mission"></div>
 <div id="timer"></div>
@@ -93,7 +93,7 @@
 
 <div id="radio"></div>
 <div id="toast"></div>
-<div id="ver">v2026-10-02b</div>
+<div id="ver">v2026-10-02c</div>
 
 <div id="intro" class="overlay"><div class="panel scroll" id="introPanel"></div></div>
 <div id="result" class="overlay"><div class="panel scroll" id="resultPanel"></div></div>
@@ -357,6 +357,8 @@ for (const c of colliders){
   geo.computeVertexNormals();
   const m = new THREE.Mesh(geo, rockMat.moon);
   m.position.set(c.x, -0.05, c.z); m.castShadow = m.receiveShadow = true;
+  m.userData.own = { earth: rockMat.earth.clone(), moon: rockMat.moon.clone() };   // うすくできるように自分用の材質
+  m.userData.fade = { col: c, r: c.r*1.1, h: c.h + 0.2, op: 1 };
   scene.add(m); rockMeshes.push(m);
 }
 
@@ -380,8 +382,9 @@ const tripRocks = [];
 
 /* 基地 */
 /* 着陸した探査機 */
+let landerGroup = null;
 {
-  const L = new THREE.Group(); L.position.set(BASE.x, 0, BASE.z + 1); L.rotation.y = 0.4; scene.add(L);
+  const L = new THREE.Group(); L.position.set(BASE.x, 0, BASE.z + 1); L.rotation.y = 0.4; scene.add(L); landerGroup = L;
   const M = (c, o={}) => new THREE.MeshStandardMaterial({ color:c, roughness:.6, ...o });
   const add = (geo, mat, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x,y,z); m.castShadow = m.receiveShadow = true; L.add(m); return m; };
   const foil = M(0xd8a33a, { metalness:.8, roughness:.35 }), silver = M(0xb8bcc2, { metalness:.7, roughness:.3 }), grey = M(0x9aa0a6, { flatShading:true });
@@ -696,7 +699,7 @@ function setMode(m){
   $('btnMoon').classList.toggle('on', moon);
   earthEnv.visible = !moon; moonEnv.visible = moon;
   rigs.earth.group.visible = !moon; rigs.moon.group.visible = moon;
-  rockMeshes.forEach(r => r.material = rockMat[m]);
+  rockMeshes.forEach(r => r.material = r.userData.own ? r.userData.own[m] : rockMat[m]);
   if (moon){
     scene.background = new THREE.Color(0x000000); scene.fog = null;
     hemi.intensity = 0.05; sun.intensity = 3.2; sun.shadow.radius = 1;
@@ -1103,24 +1106,48 @@ function updateCamera(dt){
   const want = new THREE.Vector3(player.x, player.y + 1.2, player.z);
   cam.target.lerp(want, 1 - Math.exp(-8*dt));
   const cp = Math.cos(cam.pitch), sy = Math.sin(cam.yaw), cy = Math.cos(cam.yaw), sp = Math.sin(cam.pitch);
-  // カメラが探査機や岩にめりこまないように、手前で止める
-  const blocked = (px, py, pz) =>
-    (Math.hypot(px - BASE.x, pz - (BASE.z + 1)) < 2.8 && py < 4.3) ||
-    colliders.some(c => !c.base && Math.hypot(px - c.x, pz - c.z) < c.r*1.1 && py < c.h + 0.3);
-  // ジャンプ中は「最後に地面にいたときの高さ」で調べるので、跳んでいるあいだにカメラが前後しない
-  if (player.grounded || cam.refY === undefined) cam.refY = player.y + 1.2;
-  let want2 = cam.dist;
-  for (let t = 0.8; t <= cam.dist; t += 0.25){
-    if (blocked(cam.target.x + sy*cp*t, cam.refY + sp*t, cam.target.z + cy*cp*t)){ want2 = Math.max(1.0, t - 0.4); break; }
-  }
-  cam.cur = cam.cur ?? cam.dist;
-  cam.cur += (want2 - cam.cur) * (want2 < cam.cur ? 1 : Math.min(1, 3*dt));   // ちぢめるときはすぐ、もどすときはゆっくり
-  const cx = cam.target.x + sy*cp*cam.cur, cz = cam.target.z + cy*cp*cam.cur;
-  camera.position.set(cx, Math.max(groundH(cx, cz) + 0.5, cam.target.y + sp*cam.cur), cz);
+  // カメラはいつも同じ距離。人とカメラの間にある岩や探査機は、うすくして向こうが見えるようにする
+  const cx = cam.target.x + sy*cp*cam.dist, cz = cam.target.z + cy*cp*cam.dist;
+  camera.position.set(cx, Math.max(groundH(cx, cz) + 0.5, cam.target.y + sp*cam.dist), cz);
   camera.lookAt(cam.target);
+  updateFade(dt);
   const sd = SUN_DIR[S.mode];
   sun.position.set(player.x + sd.x*60, player.y + sd.y*60, player.z + sd.z*60);
   sun.target.position.set(player.x, player.y, player.z);
+}
+
+// カメラ→人の線が、円柱（中心x,z・半径r・高さh）を通るか
+function lineHits(x, z, r, h){
+  const ax = camera.position.x, ay = camera.position.y, az = camera.position.z;
+  const ends = [player.y + 0.4, player.y + 1.6];          // 足元と頭、どちらかがかくれたら
+  for (const ey of ends){
+    const bx = player.x, bz = player.z, dx = bx - ax, dz = bz - az, L2 = dx*dx + dz*dz || 1e-6;
+    let t = ((x - ax)*dx + (z - az)*dz) / L2; t = Math.max(0, Math.min(1, t));
+    const px = ax + dx*t, pz = az + dz*t, py = ay + (ey - ay)*t;
+    if (Math.hypot(px - x, pz - z) < r && py < h && t < 0.97) return true;
+  }
+  return false;
+}
+function setOpacity(mat, op){
+  mat.opacity = op;
+  const tr = op < 0.99;
+  if (mat.transparent !== tr){ mat.transparent = tr; mat.depthWrite = !tr; mat.needsUpdate = true; }
+}
+const landerFade = { op: 1, mats: null };
+function updateFade(dt){
+  const k = 1 - Math.exp(-8*dt);
+  for (const m of rockMeshes){
+    const f = m.userData.fade; if (!f) continue;
+    const want = lineHits(f.col.x, f.col.z, f.r, f.h) ? 0.25 : 1;
+    f.op += (want - f.op) * k;
+    setOpacity(m.material, f.op);
+  }
+  if (landerGroup){
+    if (!landerFade.mats){ const set = new Set(); landerGroup.traverse(o => { if (o.material) set.add(o.material); }); landerFade.mats = [...set]; }
+    const want = lineHits(BASE.x, BASE.z + 1, 2.6, 4.3) ? 0.25 : 1;
+    landerFade.op += (want - landerFade.op) * k;
+    landerFade.mats.forEach(mt => setOpacity(mt, landerFade.op));
+  }
 }
 
 /* =========================================================
@@ -1133,7 +1160,7 @@ function resetGame(){
   S.said = {}; S.sameModeJumps = 0;
   Object.assign(player, { x:0, y:0, z:3, vx:0, vz:0, vy:0, grounded:true, facing:Math.PI, jump:null, phase:0, stride:0, moveAmt:0,
     state:'normal', st:0, tilt:0, tiltV:0, cool:0 });
-  cam.yaw = 0; cam.pitch = 0.32; cam.target.set(0, 1.2, 3); cam.cur = cam.dist; cam.refY = undefined;
+  cam.yaw = 0; cam.pitch = 0.32; cam.target.set(0, 1.2, 3);
   fpIndex = 0; footprints.count = 0;
   const spots = pickStoneSpots();
   stones.forEach((s, i) => { s.collected = false; s.g.visible = false; s.spot = spots[i]; });
